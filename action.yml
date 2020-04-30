@@ -1,21 +1,33 @@
 name: '"AWS CodeBuild run build" Action For GitHub Actions'
-description: 'Execute CodeBuild::startBuild for the current repo.'
+description: "Execute CodeBuild::startBuild for the current repo."
 branding:
-  icon: 'cloud'
-  color: 'orange'
+  icon: "cloud"
+  color: "orange"
 inputs:
-  project-name:
-    description: 'AWS CodeBuild Project Name'
+  application-name:
+    description: "AWS CodeDeploy Application Name"
     required: true
-  buildspec-override:
-    description: 'Buildspec Override'
+  deployment-config-name:
+    description: "Config name"
     required: false
-  env-vars-for-codebuild:
-    description: 'Comma separated list of environment variables to send to CodeBuild'
+  deployment-group-name:
+    description: "Config name"
+    required: false
+  file-exists-behavior:
+    description: "File exists behavior"
+    required: false
+  s3-bucket:
+    description: "S3 Bucket"
+    required: false
+  s3-key:
+    description: "S3 Key"
+    required: false
+  bundle-type:
+    description: "Bundle type"
     required: false
 outputs:
   aws-build-id:
-    description: 'The AWS CodeBuild Build ID for this build.'
+    description: "The AWS CodeBuild Build ID for this build."
 runs:
-  using: 'node12'
-  main: 'dist/index.js'
+  using: "node12"
+  main: "dist/index.js"
