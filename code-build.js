@@ -2,184 +2,154 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const core = require("@actions/core");
-const github = require("@actions/github");
 const aws = require("aws-sdk");
 const assert = require("assert");
 
 module.exports = {
-  runBuild,
-  build,
+  runDeploy,
+  deploy,
   waitForBuildEndTime,
   inputs2Parameters,
   githubInputs,
   buildSdk,
-  logName
+  logName,
 };
 
-function runBuild() {
+function runDeploy() {
   // get a codeBuild instance from the SDK
   const sdk = buildSdk();
 
   // Get input options for startBuild
   const params = inputs2Parameters(githubInputs());
 
-  return build(sdk, params);
+  return deploy(sdk, params);
 }
 
-async function build(sdk, params) {
-  // Start the build
-  const start = await sdk.codeBuild.startBuild(params).promise();
+async function deploy(sdk, params) {
+  // Start the deployment
+  const deployment = await sdk.codeDeploy.createDeployment(params).promise();
 
-  // Wait for the build to "complete"
-  return waitForBuildEndTime(sdk, start.build);
+  // Wait for the deployment to be "TODO"
+  return waitForBuildEndTime(sdk, deployment.deploymentId);
 }
 
-async function waitForBuildEndTime(sdk, { id, logs }, nextToken) {
-  const {
-    codeBuild,
-    cloudWatchLogs,
-    wait = 1000 * 30,
-    backOff = 1000 * 15
-  } = sdk;
+async function waitForBuildEndTime(sdk, deploymentId) {
+  const { codeDeploy, wait = 1000 * 30, backOff = 1000 * 15 } = sdk;
 
-  // Get the CloudWatchLog info
-  const startFromHead = true;
-  const { cloudWatchLogsArn } = logs;
-  const { logGroupName, logStreamName } = logName(cloudWatchLogsArn);
+  // Get deployment status
+  const deploymentStatus = await codeDeploy
+    .getDeployment({ deploymentId })
+    .promise();
+  const status = deploymentStatus.deploymentInfo.status;
+  const overview = deploymentStatus.deploymentInfo.deploymentOverview;
+  const ongoingStatus = ["Created", "Queued", "InProgress", "Ready"];
 
-  let errObject = false;
-
-  // Check the state
-  const [batch, cloudWatch = {}] = await Promise.all([
-    codeBuild.batchGetBuilds({ ids: [id] }).promise(),
-    // The CloudWatchLog _may_ not be set up, only make the call if we have a logGroupName
-    logGroupName &&
-      cloudWatchLogs
-        .getLogEvents({ logGroupName, logStreamName, startFromHead, nextToken })
-        .promise()
-  ]).catch(err => {
-    errObject = err;
-    /* Returning [] here so that the assignment above
-     * does not throw `TypeError: undefined is not iterable`.
-     * The error is handled below,
-     * since it might be a rate limit.
-     */
-    return [];
-  });
-
-  if (errObject) {
-    //We caught an error in trying to make the AWS api call, and are now checking to see if it was just a rate limiting error
-    if (errObject.message && errObject.message.search("Rate exceeded") !== -1) {
-      //We were rate-limited, so add `backOff` seconds to the wait time
-      let newWait = wait + backOff;
-
-      //Sleep before trying again
-      await new Promise(resolve => setTimeout(resolve, newWait));
-
-      // Try again from the same token position
-      return waitForBuildEndTime(
-        { ...sdk, wait: newWait },
-        { id, logs },
-        nextToken
-      );
-    } else {
-      //The error returned from the API wasn't about rate limiting, so throw it as an actual error and fail the job
-      throw errObject;
-    }
+  // Check if it's successful
+  if (status === "Succeeded") {
+    console.log(`[${status}] : `, overview);
+    return {
+      status,
+      overview,
+      deploymentId,
+    };
   }
 
-  // Pluck off the relevant state
-  const [current] = batch.builds;
-  const { nextForwardToken, events = [] } = cloudWatch;
+  // Check if it's ongoing
+  if (ongoingStatus.includes(status)) {
+    console.log(`[${status}] : `, overview);
 
-  // stdout the CloudWatchLog (everyone likes progress...)
-  // CloudWatchLogs have line endings.
-  // I trim and then log each line
-  // to ensure that the line ending is OS specific.
-  events.forEach(({ message }) => console.log(message.trimEnd()));
+    const newWait = wait + backOff;
+    //Sleep before trying again
+    await new Promise((resolve) => setTimeout(resolve, newWait));
+    // Try again from the same token position
+    return waitForBuildEndTime({ ...sdk, wait: newWait }, deploymentId);
+  }
 
-  // We did it! We can stop looking!
-  if (current.endTime && !events.length) return current;
-
-  // More to do: Sleep for a few seconds to avoid rate limiting
-  await new Promise(resolve => setTimeout(resolve, wait));
-
-  // Try again
-  return waitForBuildEndTime(sdk, current, nextForwardToken);
+  // Now there is an error
+  throw new Error({
+    deploymentId,
+    code: deploymentStatus.errorInformation.code,
+    message: deploymentStatus.errorInformation.message,
+  });
 }
 
 function githubInputs() {
-  const projectName = core.getInput("project-name", { required: true });
-  const { owner, repo } = github.context.repo;
-  // The github.context.sha is evaluated on import.
-  // This makes it hard to test.
-  // So I use the raw ENV
-  const sourceVersion = process.env[`GITHUB_SHA`];
-  const buildspecOverride =
-    core.getInput("buildspec-override", { required: false }) || undefined;
-
-  const envPassthrough = core
-    .getInput("env-vars-for-codebuild", { required: false })
-    .split(",")
-    .map(i => i.trim())
-    .filter(i => i !== "");
+  const applicationName = core.getInput("application-name", { required: true });
+  const deploymentConfigName = core.getInput("deployment-config-name", {
+    required: true,
+  });
+  const deploymentGroupName = core.getInput("deployment-group-name", {
+    required: true,
+  });
+  const fileExistsBehavior = core.getInput("file-exists-behavior", {
+    required: false,
+  });
+  const s3Bucket = core.getInput("s3-bucket");
+  const s3Key = core.getInput("s3-key");
+  const bundleType = core.getInput("bundle-type");
 
   return {
-    projectName,
-    owner,
-    repo,
-    sourceVersion,
-    buildspecOverride,
-    envPassthrough
+    applicationName,
+    deploymentConfigName,
+    deploymentGroupName,
+    fileExistsBehavior,
+    s3Bucket,
+    s3Key,
+    bundleType,
   };
 }
 
 function inputs2Parameters(inputs) {
   const {
-    projectName,
-    owner,
-    repo,
-    sourceVersion,
-    buildspecOverride,
-    envPassthrough = []
+    applicationName,
+    deploymentConfigName,
+    deploymentGroupName,
+    fileExistsBehavior = "DISALLOW",
+    s3Bucket,
+    s3Key,
+    bundleType = "zip",
   } = inputs;
 
-  const sourceTypeOverride = "GITHUB";
-  const sourceLocationOverride = `https://github.com/${owner}/${repo}.git`;
-
-  const environmentVariablesOverride = Object.entries(process.env)
-    .filter(
-      ([key]) => key.startsWith("GITHUB_") || envPassthrough.includes(key)
-    )
-    .map(([name, value]) => ({ name, value, type: "PLAINTEXT" }));
-
-  // The idempotencyToken is intentionally not set.
-  // This way the GitHub events can manage the builds.
   return {
-    projectName,
-    sourceVersion,
-    sourceTypeOverride,
-    sourceLocationOverride,
-    buildspecOverride,
-    environmentVariablesOverride
+    applicationName,
+    autoRollbackConfiguration: {
+      enabled: true,
+      events: ["DEPLOYMENT_FAILURE", "DEPLOYMENT_STOP_ON_REQUEST"],
+    },
+    deploymentConfigName,
+    deploymentGroupName,
+    fileExistsBehavior,
+    revision: {
+      revisionType: "S3",
+      s3Location: {
+        bucket: s3Bucket,
+        bundleType,
+        key: s3Key,
+      },
+    },
   };
 }
 
-function buildSdk() {
-  const codeBuild = new aws.CodeBuild({
-    customUserAgent: "aws-actions/aws-codebuild-run-build"
-  });
+function buildSdk({ local = false }) {
+  if (local) {
+    const profile = new aws.SharedIniFileCredentials({
+      profile: "academy-api-deploy",
+    });
 
-  const cloudWatchLogs = new aws.CloudWatchLogs({
-    customUserAgent: "aws-actions/aws-codebuild-run-build"
+    aws.config.credentials = profile;
+  }
+
+  const codeDeploy = new aws.CodeDeploy({
+    customUserAgent: "aws-actions/aws-codedeploy-run-build",
+    region: "eu-west-3",
   });
 
   assert(
-    codeBuild.config.credentials && cloudWatchLogs.config.credentials,
+    codeDeploy.config.credentials,
     "No credentials. Try adding @aws-actions/configure-aws-credentials earlier in your job to set up AWS credentials."
   );
 
-  return { codeBuild, cloudWatchLogs };
+  return { codeDeploy };
 }
 
 function logName(Arn) {
@@ -189,7 +159,7 @@ function logName(Arn) {
   if (logGroupName === "null" || logStreamName === "null")
     return {
       logGroupName: undefined,
-      logStreamName: undefined
+      logStreamName: undefined,
     };
   return { logGroupName, logStreamName };
 }

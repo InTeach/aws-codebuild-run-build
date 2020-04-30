@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const core = require("@actions/core");
-const { runBuild } = require("./code-build");
+const { runDeploy } = require("./code-build");
 const assert = require("assert");
 
 /* istanbul ignore next */
@@ -15,7 +15,7 @@ module.exports = run;
 async function run() {
   console.log("*****STARTING CODEBUILD*****");
   try {
-    const build = await runBuild();
+    const build = await runDeploy();
     core.setOutput("aws-build-id", build.id);
 
     // Signal the outcome
@@ -24,7 +24,9 @@ async function run() {
       `Build status: ${build.buildStatus}`
     );
   } catch (error) {
-    core.setFailed(error.message);
+    core.setFailed(
+      `Message : ${error.message}. Code ${error.code}. DeploymentId ${error.deploymentId}`
+    );
   } finally {
     console.log("*****CODEBUILD COMPLETE*****");
   }
