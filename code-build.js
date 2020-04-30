@@ -130,7 +130,7 @@ function inputs2Parameters(inputs) {
   };
 }
 
-function buildSdk({ local = false }) {
+function buildSdk({ local = false } = {}) {
   if (local) {
     const profile = new aws.SharedIniFileCredentials({
       profile: "academy-api-deploy",
