@@ -26,7 +26,7 @@ inputs:
     description: "Bundle type"
     required: false
 outputs:
-  aws-build-id:
+  aws-deployment-id:
     description: "The AWS CodeBuild Build ID for this build."
 runs:
   using: "node12"

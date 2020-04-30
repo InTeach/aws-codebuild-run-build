@@ -16,10 +16,10 @@ async function run() {
   console.log("*****STARTING CODEDEPLOY*****");
   try {
     const deployment = await runDeploy();
-    core.setOutput("deployment", deployment.deploymentId);
+    core.setOutput("aws-deployment-id", deployment.deploymentId);
 
     // Signal the outcome
-    assert(deployment === "Succeeded", "Deployment succeeded");
+    assert(deployment.deploymentId === "Succeeded", "Deployment succeeded");
   } catch (error) {
     core.setFailed(
       `Message : ${error.message}. Code ${error.code}. DeploymentId ${error.deploymentId}`
