@@ -13,21 +13,18 @@ if (require.main === module) {
 module.exports = run;
 
 async function run() {
-  console.log("*****STARTING CODEBUILD*****");
+  console.log("*****STARTING CODEDEPLOY*****");
   try {
-    const build = await runDeploy();
-    core.setOutput("aws-build-id", build.id);
+    const deployment = await runDeploy();
+    core.setOutput("deployment", deployment.deploymentId);
 
     // Signal the outcome
-    assert(
-      build.buildStatus === "SUCCEEDED",
-      `Build status: ${build.buildStatus}`
-    );
+    assert(deployment === "Succeeded", "Deployment succeeded");
   } catch (error) {
     core.setFailed(
       `Message : ${error.message}. Code ${error.code}. DeploymentId ${error.deploymentId}`
     );
   } finally {
-    console.log("*****CODEBUILD COMPLETE*****");
+    console.log("*****CODEDEPLOY COMPLETE*****");
   }
 }
