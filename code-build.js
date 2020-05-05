@@ -13,16 +13,28 @@ module.exports = {
   githubInputs,
   buildSdk,
   logName,
+  getAutoScalingGroupName,
 };
 
-function runDeploy() {
+async function runDeploy() {
   // get a codeBuild instance from the SDK
   const sdk = buildSdk();
 
+  // Get Autoscaling group
+  const autoScalingGroupName = await getAutoScalingGroupName(sdk);
+
   // Get input options for startBuild
-  const params = inputs2Parameters(githubInputs());
+  const params = inputs2Parameters(githubInputs(), autoScalingGroupName);
 
   return deploy(sdk, params);
+}
+
+async function getAutoScalingGroupName({ autoScaling }) {
+  const {
+    AutoScalingGroups: [inteachScalingGroup],
+  } = await autoScaling.describeAutoScalingGroups().promise();
+
+  return inteachScalingGroup.AutoScalingGroupName;
 }
 
 async function deploy(sdk, params) {
@@ -99,7 +111,7 @@ function githubInputs() {
   };
 }
 
-function inputs2Parameters(inputs) {
+function inputs2Parameters(inputs, autoScalingGroupName) {
   const {
     applicationName,
     deploymentConfigName,
@@ -119,6 +131,9 @@ function inputs2Parameters(inputs) {
     deploymentConfigName,
     deploymentGroupName,
     fileExistsBehavior,
+    targetInstances: {
+      autoScalingGroups: [autoScalingGroupName],
+    },
     revision: {
       revisionType: "S3",
       s3Location: {
@@ -144,12 +159,17 @@ function buildSdk({ local = false } = {}) {
     region: "eu-west-3",
   });
 
+  const autoScaling = new aws.AutoScaling({
+    customUserAgent: "aws-actions/aws-codedeploy-run-build",
+    region: "eu-west-3",
+  });
+
   assert(
     codeDeploy.config.credentials,
     "No credentials. Try adding @aws-actions/configure-aws-credentials earlier in your job to set up AWS credentials."
   );
 
-  return { codeDeploy };
+  return { codeDeploy, autoScaling };
 }
 
 function logName(Arn) {
