@@ -21,10 +21,10 @@ async function runDeploy() {
   const sdk = buildSdk();
 
   // Get Autoscaling group
-  const autoScalingGroupName = await getAutoScalingGroupName(sdk);
+  //const autoScalingGroupName = await getAutoScalingGroupName(sdk);
 
   // Get input options for startBuild
-  const params = inputs2Parameters(githubInputs(), autoScalingGroupName);
+  const params = inputs2Parameters(githubInputs());
 
   return deploy(sdk, params);
 }
@@ -111,7 +111,7 @@ function githubInputs() {
   };
 }
 
-function inputs2Parameters(inputs, autoScalingGroupName) {
+function inputs2Parameters(inputs) {
   const {
     applicationName,
     deploymentConfigName,
@@ -131,9 +131,6 @@ function inputs2Parameters(inputs, autoScalingGroupName) {
     deploymentConfigName,
     deploymentGroupName,
     fileExistsBehavior,
-    targetInstances: {
-      autoScalingGroups: [autoScalingGroupName],
-    },
     revision: {
       revisionType: "S3",
       s3Location: {
