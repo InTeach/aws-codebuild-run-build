@@ -5,6 +5,9 @@ const core = require("@actions/core");
 const aws = require("aws-sdk");
 const assert = require("assert");
 
+const NEW_INSTANCE_TAG = "CODEDEPLOY_TARGET";
+const DEPLOYED_INSTANCE_TAG = "ACTIVE_API_INSTANCE";
+
 module.exports = {
   runDeploy,
   deploy,
@@ -13,28 +16,90 @@ module.exports = {
   githubInputs,
   buildSdk,
   logName,
-  getAutoScalingGroupName,
 };
 
 async function runDeploy() {
   // get a codeBuild instance from the SDK
-  const sdk = buildSdk();
+  //const sdk = buildSdk();
 
-  // Get Autoscaling group
-  //const autoScalingGroupName = await getAutoScalingGroupName(sdk);
+  // Create a new EC2 instance from launchTemplate
+  const ec2Instance = await createEC2Instance();
+
+  // Attach EC2 instance to AutoScalingGroup
+  await attachEC2Instance(ec2Instance);
 
   // Get input options for startBuild
-  const params = inputs2Parameters(githubInputs());
+  //const params = inputs2Parameters(githubInputs());
 
-  return deploy(sdk, params);
+  //const deployInfos = await deploy(sdk, params);
+
+  // Deploy successful now remove tag from ec2Instance
+  await updateTags(ec2Instance);
+
+  return { deploymentId: "ok" };
+  //return deployInfos;
 }
 
-async function getAutoScalingGroupName({ autoScaling }) {
-  const {
-    AutoScalingGroups: [inteachScalingGroup],
-  } = await autoScaling.describeAutoScalingGroups().promise();
+async function updateTags(ec2Instance) {
+  const ec2 = new aws.EC2({ region: "eu-west-3" });
 
-  return inteachScalingGroup.AutoScalingGroupName;
+  await Promise.all([
+    ec2.deleteTags({
+      Resources: [ec2Instance.InstanceId],
+      Tags: [
+        {
+          key: NEW_INSTANCE_TAG,
+        },
+      ],
+    }),
+    ec2.createTags({
+      Resources: [ec2Instance.InstanceId],
+      Tags: [{ Key: DEPLOYED_INSTANCE_TAG }],
+    }),
+  ]);
+}
+
+async function attachEC2Instance(ec2Instance) {
+  const autoscaling = new aws.AutoScaling({ region: "eu-west-3" });
+
+  const [
+    autoscalingGroup,
+  ] = await autoscaling.describeAutoScalingGroups().promise();
+
+  if (!autoscalingGroup) throw new Error("Autoscaling group not found");
+
+  await autoscaling
+    .attachInstances({
+      InstanceIds: [ec2Instance.InstanceId],
+      AutoScalingGroupName: autoscalingGroup.AutoScalingGroupName,
+    })
+    .promise();
+}
+
+async function createEC2Instance() {
+  const ec2 = new aws.EC2({ region: "eu-west-3" });
+
+  const instances = await ec2
+    .runInstances({
+      LaunchTemplate: {
+        LaunchTemplateName: "AcademyModel",
+        Version: 1,
+      },
+      TagSpecifications: [
+        {
+          Tags: [{ Key: NEW_INSTANCE_TAG }],
+        },
+      ],
+      MinCount: 1,
+      MaxCount: 1,
+    })
+    .promise();
+
+  const {
+    Instances: [instance],
+  } = instances;
+
+  return instance;
 }
 
 async function deploy(sdk, params) {
