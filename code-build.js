@@ -26,6 +26,8 @@ async function runDeploy() {
   const inputs = githubInputs();
   const params = inputs2Parameters(inputs);
 
+  console.log("Deployment type is", inputs.deploymentType);
+
   if (inputs.deploymentType === "in-place") {
     return deploy(sdk, params);
   } else {
@@ -347,7 +349,7 @@ function inputs2Parameters(inputs) {
       revisionType: "S3",
       s3Location: {
         bucket: s3Bucket,
-        bundleType: bundleType,
+        bundleType,
         key: s3Key,
       },
     },
