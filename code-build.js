@@ -39,6 +39,7 @@ async function runDeploy() {
 
     console.log("Waiting for instance to be ready");
     await waitFor(instanceId);
+    console.log("Instance is", instanceId);
 
     // Deregister instance from targetGroup
     console.log("Deregister instance from TargetGroup");
