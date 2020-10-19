@@ -25,6 +25,9 @@ inputs:
   bundle-type:
     description: "Bundle type"
     required: false
+  deployment-type:
+    description: "Deployment type"
+    required: false
 outputs:
   aws-deployment-id:
     description: "The AWS CodeBuild Build ID for this build."
