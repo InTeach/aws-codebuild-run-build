@@ -78,7 +78,7 @@ const sdk = cb.buildSdk({ local: true });
 
 pushBranch(remote, BRANCH_NAME);
 
-cb.deploy(sdk, params)
+cb.runDeploy()
   .then(() => deleteBranch(remote, BRANCH_NAME))
   .catch((err) => {
     deleteBranch(remote, BRANCH_NAME);
