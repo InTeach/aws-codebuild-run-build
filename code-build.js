@@ -20,86 +20,228 @@ module.exports = {
 
 async function runDeploy() {
   // get a codeBuild instance from the SDK
-  //const sdk = buildSdk();
-
-  // Create a new EC2 instance from launchTemplate
-  const ec2Instance = await createEC2Instance();
-
-  // Attach EC2 instance to AutoScalingGroup
-  await attachEC2Instance(ec2Instance);
+  const sdk = buildSdk();
 
   // Get input options for startBuild
-  //const params = inputs2Parameters(githubInputs());
+  const inputs = githubInputs();
+  const params = inputs2Parameters(inputs);
 
-  //const deployInfos = await deploy(sdk, params);
+  if (inputs.deploymentType === "in-place") {
+    return deploy(sdk, params);
+  } else {
+    console.log("Looking for ASG");
+    const autoscalingGroup = await getAutoScalingGroup();
 
-  // Deploy successful now remove tag from ec2Instance
-  await updateTags(ec2Instance);
+    console.log("ASG found, scaling up");
+    const instanceId = await scale("UP", autoscalingGroup);
 
-  return { deploymentId: "ok" };
-  //return deployInfos;
+    console.log("Waiting for instance to be ready");
+    await waitFor(instanceId);
+
+    // Deregister instance from targetGroup
+    console.log("Deregister instance from TargetGroup");
+    await targetRegistration("deregister", instanceId);
+
+    // Add tag to deploy to this new instance
+    console.log("Adding " + NEW_INSTANCE_TAG + " tag to instance");
+    await updateTags(instanceId, "target");
+
+    // Update deployment group to reset EC2 tags filter because after
+    // each deployment it's changed to NEW_INSTANCE_TAG
+    // But it should be kept as it is
+    console.log("Updating deployment group");
+    await updateDeploymentGroup(sdk);
+
+    console.log("Starting deployment with params", params);
+    const deployInfos = await deploy(sdk, params);
+
+    // Register instance from targetGroup
+    console.log("Register instance to TargetGroup");
+    await targetRegistration("register", instanceId);
+
+    // Deploy successful now remove tag from ec2Instance
+    console.log("Updating tags");
+    await updateTags(instanceId);
+
+    // Scaling down
+    console.log("Scaling down");
+    await scale("DOWN", autoscalingGroup);
+
+    return deployInfos;
+  }
 }
 
-async function updateTags(ec2Instance) {
-  const ec2 = new aws.EC2({ region: "eu-west-3" });
-
-  await Promise.all([
-    ec2.deleteTags({
-      Resources: [ec2Instance.InstanceId],
-      Tags: [
+async function updateDeploymentGroup(sdk) {
+  await sdk.codeDeploy
+    .updateDeploymentGroup({
+      applicationName: "InTeach-Academy",
+      currentDeploymentGroupName: "Production-BlueGreen",
+      ec2TagFilters: [
         {
-          key: NEW_INSTANCE_TAG,
+          Key: DEPLOYED_INSTANCE_TAG,
+          Value: "",
+          Type: "KEY_ONLY",
         },
       ],
-    }),
-    ec2.createTags({
-      Resources: [ec2Instance.InstanceId],
-      Tags: [{ Key: DEPLOYED_INSTANCE_TAG }],
-    }),
-  ]);
+    })
+    .promise();
 }
 
-async function attachEC2Instance(ec2Instance) {
+async function targetRegistration(type, InstanceId) {
+  const elb = new aws.ELBv2({ region: "eu-west-3" });
+
+  const { TargetGroups } = await elb.describeTargetGroups().promise();
+
+  const targetGroup = TargetGroups.find(({ TargetGroupName }) =>
+    TargetGroupName.toLowerCase().includes("inteach")
+  );
+
+  if (!targetGroup) throw new Error("No target group found");
+
+  if (type === "deregister") {
+    // Remove target to avoid interruption time
+    return await elb
+      .deregisterTargets({
+        TargetGroupArn: targetGroup.TargetGroupArn,
+        Targets: [
+          {
+            Id: InstanceId,
+          },
+        ],
+      })
+      .promise();
+  }
+
+  return await elb
+    .registerTargets({
+      TargetGroupArn: targetGroup.TargetGroupArn,
+      Targets: [
+        {
+          Id: InstanceId,
+        },
+      ],
+    })
+    .promise();
+}
+
+async function getAutoScalingGroup() {
   const autoscaling = new aws.AutoScaling({ region: "eu-west-3" });
 
-  const [
-    autoscalingGroup,
-  ] = await autoscaling.describeAutoScalingGroups().promise();
+  const {
+    AutoScalingGroups,
+  } = await autoscaling.describeAutoScalingGroups().promise();
+
+  const autoscalingGroup = AutoScalingGroups.find((group) =>
+    group.AutoScalingGroupName.toLowerCase().includes("academy")
+  );
 
   if (!autoscalingGroup) throw new Error("Autoscaling group not found");
 
+  return autoscalingGroup;
+}
+
+async function scale(direction, autoscalingGroup) {
+  const ec2 = new aws.EC2({ region: "eu-west-3" });
+  const autoscaling = new aws.AutoScaling({ region: "eu-west-3" });
+
+  const DesiredCapacity = direction === "UP" ? 2 : 1;
+
   await autoscaling
-    .attachInstances({
-      InstanceIds: [ec2Instance.InstanceId],
+    .updateAutoScalingGroup({
+      DesiredCapacity,
       AutoScalingGroupName: autoscalingGroup.AutoScalingGroupName,
     })
     .promise();
+
+  if (direction === "DOWN") return;
+
+  console.log(
+    "ASG scaled up, waiting 30 seconds before looking for instances status"
+  );
+
+  // Wait 15 seconds before looking for an initializing instance
+  await new Promise((resolve) => {
+    setTimeout(resolve, 30 * 1000);
+  });
+
+  const { InstanceStatuses } = await ec2.describeInstanceStatus().promise();
+
+  const initializingInstance = InstanceStatuses.find(({ InstanceStatus }) => {
+    return InstanceStatus.Details.find(({ Status }) => {
+      return Status === "initializing";
+    });
+  });
+
+  if (!initializingInstance) throw new Error("No instance initiliazed found");
+
+  return initializingInstance.InstanceId;
 }
 
-async function createEC2Instance() {
+async function updateTags(InstanceId, typeOfTag) {
   const ec2 = new aws.EC2({ region: "eu-west-3" });
 
-  const instances = await ec2
-    .runInstances({
-      LaunchTemplate: {
-        LaunchTemplateName: "AcademyModel",
-        Version: 1,
-      },
-      TagSpecifications: [
-        {
-          Tags: [{ Key: NEW_INSTANCE_TAG }],
-        },
-      ],
-      MinCount: 1,
-      MaxCount: 1,
-    })
-    .promise();
+  if (typeOfTag === "target") {
+    await ec2
+      .createTags({
+        Resources: [InstanceId],
+        Tags: [{ Key: NEW_INSTANCE_TAG, Value: "" }],
+      })
+      .promise();
+  } else {
+    await Promise.all([
+      ec2
+        .deleteTags({
+          Resources: [InstanceId],
+          Tags: [
+            {
+              Key: NEW_INSTANCE_TAG,
+            },
+          ],
+        })
+        .promise(),
+      ec2
+        .createTags({
+          Resources: [InstanceId],
+          Tags: [{ Key: DEPLOYED_INSTANCE_TAG, Value: "" }],
+        })
+        .promise(),
+    ]);
+  }
+}
 
-  const {
-    Instances: [instance],
-  } = instances;
+async function waitFor(InstanceId) {
+  const ec2 = new aws.EC2({ region: "eu-west-3" });
 
-  return instance;
+  const TIMEOUT = 300;
+  const INTERVAL_TIME = 10 * 1000;
+  let totalTime = 0;
+
+  await new Promise((resolve, reject) => {
+    const interval = setInterval(async () => {
+      if (totalTime / 1000 > TIMEOUT) {
+        clearInterval(interval);
+        return reject();
+      }
+
+      const status = await ec2
+        .describeInstanceStatus({
+          InstanceIds: [InstanceId],
+        })
+        .promise();
+
+      const InstanceStatus =
+        status.InstanceStatuses[0] &&
+        status.InstanceStatuses[0].InstanceStatus &&
+        status.InstanceStatuses[0].InstanceStatus.Status;
+
+      if (InstanceStatus === "ok") {
+        clearInterval(interval);
+        return resolve();
+      }
+
+      totalTime += INTERVAL_TIME;
+    }, INTERVAL_TIME);
+  });
 }
 
 async function deploy(sdk, params) {
@@ -142,6 +284,8 @@ async function waitForBuildEndTime(sdk, deploymentId) {
     return waitForBuildEndTime({ ...sdk, wait: newWait }, deploymentId);
   }
 
+  console.log("deploymentStatus", deploymentStatus);
+
   // Now there is an error
   throw new Error({
     deploymentId,
@@ -164,6 +308,7 @@ function githubInputs() {
   const s3Bucket = core.getInput("s3-bucket");
   const s3Key = core.getInput("s3-key");
   const bundleType = core.getInput("bundle-type");
+  const deploymentType = core.getInput("deployment-type");
 
   return {
     applicationName,
@@ -173,6 +318,7 @@ function githubInputs() {
     s3Bucket,
     s3Key,
     bundleType,
+    deploymentType,
   };
 }
 
@@ -185,26 +331,48 @@ function inputs2Parameters(inputs) {
     s3Bucket,
     s3Key,
     bundleType = "zip",
+    deploymentType,
   } = inputs;
 
-  return {
+  const mainConfig = {
     applicationName,
     autoRollbackConfiguration: {
       enabled: true,
       events: ["DEPLOYMENT_FAILURE", "DEPLOYMENT_STOP_ON_REQUEST"],
     },
     deploymentConfigName,
-    deploymentGroupName,
     fileExistsBehavior,
+    deploymentGroupName,
     revision: {
       revisionType: "S3",
       s3Location: {
         bucket: s3Bucket,
-        bundleType,
+        bundleType: bundleType,
         key: s3Key,
       },
     },
   };
+
+  if (deploymentType === "blue-green") {
+    return {
+      ...mainConfig,
+      targetInstances: {
+        ec2TagSet: {
+          ec2TagSetList: [
+            [
+              {
+                Key: NEW_INSTANCE_TAG,
+                Value: "",
+                Type: "KEY_ONLY",
+              },
+            ],
+          ],
+        },
+      },
+    };
+  }
+
+  return mainConfig;
 }
 
 function buildSdk({ local = false } = {}) {
