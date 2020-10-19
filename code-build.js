@@ -42,8 +42,8 @@ async function runDeploy() {
     console.log("Instance is", instanceId);
 
     // Deregister instance from targetGroup
-    console.log("Deregister instance from TargetGroup");
-    await targetRegistration("deregister", instanceId);
+    //console.log("Deregister instance from TargetGroup");
+    //await targetRegistration("deregister", instanceId);
 
     // Add tag to deploy to this new instance
     console.log("Adding " + NEW_INSTANCE_TAG + " tag to instance");
@@ -59,8 +59,8 @@ async function runDeploy() {
     const deployInfos = await deploy(sdk, params);
 
     // Register instance from targetGroup
-    console.log("Register instance to TargetGroup");
-    await targetRegistration("register", instanceId);
+    //console.log("Register instance to TargetGroup");
+    //await targetRegistration("register", instanceId);
 
     // Deploy successful now remove tag from ec2Instance
     console.log("Updating tags");
@@ -102,6 +102,41 @@ async function targetRegistration(type, InstanceId) {
   if (!targetGroup) throw new Error("No target group found");
 
   if (type === "deregister") {
+    const TIMEOUT = 300;
+    const INTERVAL_TIME = 10 * 1000;
+    let totalTime = 0;
+
+    // Wait for target to be healty before unregister
+    await new Promise((resolve, reject) => {
+      const interval = setInterval(async () => {
+        if (totalTime / 1000 > TIMEOUT) {
+          clearInterval(interval);
+          return reject();
+        }
+
+        const {
+          TargetHealthDescriptions: [
+            {
+              TargetHealth: { State },
+            },
+          ],
+        } = await elb
+          .describeTargetHealth({
+            TargetGroupArn: [targetGroup.TargetGroupArn],
+            Targets: [{ Id: InstanceId }],
+          })
+          .promise();
+
+        // Wait for target to be healty before unregister
+        if (State === "healthy") {
+          clearInterval(interval);
+          return resolve();
+        }
+
+        totalTime += INTERVAL_TIME;
+      }, INTERVAL_TIME);
+    });
+
     // Remove target to avoid interruption time
     return await elb
       .deregisterTargets({
