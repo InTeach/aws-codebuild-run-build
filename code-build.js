@@ -194,12 +194,12 @@ async function scale(direction, autoscalingGroup) {
   if (direction === "DOWN") return;
 
   console.log(
-    "ASG scaled up, waiting 30 seconds before looking for instances status"
+    "ASG scaled up, waiting 45 seconds before looking for instances status"
   );
 
   // Wait 15 seconds before looking for an initializing instance
   await new Promise((resolve) => {
-    setTimeout(resolve, 30 * 1000);
+    setTimeout(resolve, 45 * 1000);
   });
 
   const { InstanceStatuses } = await ec2.describeInstanceStatus().promise();
