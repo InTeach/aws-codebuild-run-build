@@ -102,7 +102,7 @@ async function waitForDeployment(sdk) {
 }
 
 async function updateDeploymentGroup(sdk, autoScalingGroups = []) {
-  await sdk
+  await sdk.codeDeploy
     .updateDeploymentGroup({
       applicationName: "InTeach-Academy",
       currentDeploymentGroupName: "Production-BlueGreen",
