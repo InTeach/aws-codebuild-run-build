@@ -37,9 +37,8 @@ async function runDeploy() {
     console.log("ASG found, scaling up");
     const instanceId = await scale("UP", autoscalingGroup);
 
-    console.log("Waiting for instance to be ready");
+    console.log(`Waiting for instance ${instanceId} to be ready`);
     await waitFor(instanceId);
-    console.log("Instance is", instanceId);
 
     console.log(`Waiting for deployment on ${instanceId} to be done`);
     await waitForDeployment(sdk);
@@ -48,14 +47,19 @@ async function runDeploy() {
     console.log("Adding " + NEW_INSTANCE_TAG + " tag to instance");
     await updateTags(instanceId, "target");
 
-    // Update deployment group to reset EC2 tags filter because after
-    // each deployment it's changed to NEW_INSTANCE_TAG
-    // But it should be kept as it is
-    console.log("Updating deployment group");
+    /**
+     * We need to remove ASV from deployment group otherwise it will select
+     * the CODEDEPLOY_TARGET instance thus causing a crash because CD won't find
+     * a replacement. We will put it back after the deployment is successful
+     */
+    console.log("Removing ASG from Deployment Group");
     await updateDeploymentGroup(sdk);
 
     console.log("Starting deployment with params", params);
     const deployInfos = await deploy(sdk, params);
+
+    console.log("Adding ASCF to Deployment Group");
+    await updateDeploymentGroup(sdk, [autoscalingGroup.AutoScalingGroupName]);
 
     // Deploy successful now remove tag from ec2Instance
     console.log("Updating tags");
@@ -97,11 +101,12 @@ async function waitForDeployment(sdk) {
     .promise();
 }
 
-async function updateDeploymentGroup(sdk) {
-  await sdk.codeDeploy
+async function updateDeploymentGroup(sdk, autoScalingGroups = []) {
+  await sdk
     .updateDeploymentGroup({
       applicationName: "InTeach-Academy",
       currentDeploymentGroupName: "Production-BlueGreen",
+      autoScalingGroups: autoScalingGroups,
       ec2TagFilters: [
         {
           Key: DEPLOYED_INSTANCE_TAG,
