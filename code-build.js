@@ -41,10 +41,6 @@ async function runDeploy() {
     await waitFor(instanceId);
     console.log("Instance is", instanceId);
 
-    // Deregister instance from targetGroup
-    //console.log("Deregister instance from TargetGroup");
-    //await targetRegistration("deregister", instanceId);
-
     // Add tag to deploy to this new instance
     console.log("Adding " + NEW_INSTANCE_TAG + " tag to instance");
     await updateTags(instanceId, "target");
@@ -57,10 +53,6 @@ async function runDeploy() {
 
     console.log("Starting deployment with params", params);
     const deployInfos = await deploy(sdk, params);
-
-    // Register instance from targetGroup
-    //console.log("Register instance to TargetGroup");
-    //await targetRegistration("register", instanceId);
 
     // Deploy successful now remove tag from ec2Instance
     console.log("Updating tags");
@@ -84,78 +76,6 @@ async function updateDeploymentGroup(sdk) {
           Key: DEPLOYED_INSTANCE_TAG,
           Value: "",
           Type: "KEY_ONLY",
-        },
-      ],
-    })
-    .promise();
-}
-
-async function targetRegistration(type, InstanceId) {
-  const elb = new aws.ELBv2({ region: "eu-west-3" });
-
-  const { TargetGroups } = await elb.describeTargetGroups().promise();
-
-  const targetGroup = TargetGroups.find(({ TargetGroupName }) =>
-    TargetGroupName.toLowerCase().includes("inteach")
-  );
-
-  if (!targetGroup) throw new Error("No target group found");
-
-  if (type === "deregister") {
-    const TIMEOUT = 300;
-    const INTERVAL_TIME = 10 * 1000;
-    let totalTime = 0;
-
-    // Wait for target to be healty before unregister
-    await new Promise((resolve, reject) => {
-      const interval = setInterval(async () => {
-        if (totalTime / 1000 > TIMEOUT) {
-          clearInterval(interval);
-          return reject();
-        }
-
-        const {
-          TargetHealthDescriptions: [
-            {
-              TargetHealth: { State },
-            },
-          ],
-        } = await elb
-          .describeTargetHealth({
-            TargetGroupArn: [targetGroup.TargetGroupArn],
-            Targets: [{ Id: InstanceId }],
-          })
-          .promise();
-
-        // Wait for target to be healty before unregister
-        if (State === "healthy") {
-          clearInterval(interval);
-          return resolve();
-        }
-
-        totalTime += INTERVAL_TIME;
-      }, INTERVAL_TIME);
-    });
-
-    // Remove target to avoid interruption time
-    return await elb
-      .deregisterTargets({
-        TargetGroupArn: targetGroup.TargetGroupArn,
-        Targets: [
-          {
-            Id: InstanceId,
-          },
-        ],
-      })
-      .promise();
-  }
-
-  return await elb
-    .registerTargets({
-      TargetGroupArn: targetGroup.TargetGroupArn,
-      Targets: [
-        {
-          Id: InstanceId,
         },
       ],
     })
@@ -193,26 +113,37 @@ async function scale(direction, autoscalingGroup) {
 
   if (direction === "DOWN") return;
 
-  console.log(
-    "ASG scaled up, waiting 45 seconds before looking for instances status"
-  );
+  const TIMEOUT = 60; // 1 minute
+  const INTERVAL_TIME = 10 * 1000; // 10 Seconds
+  let totalTime = 0;
 
-  // Wait 15 seconds before looking for an initializing instance
-  await new Promise((resolve) => {
-    setTimeout(resolve, 45 * 1000);
+  const InstanceId = await new Promise((resolve, reject) => {
+    const interval = setInterval(async () => {
+      if (totalTime / 1000 > TIMEOUT) {
+        clearInterval(interval);
+        return reject();
+      }
+
+      const { InstanceStatuses } = await ec2.describeInstanceStatus().promise();
+
+      const initializingInstance = InstanceStatuses.find(
+        ({ InstanceStatus }) => {
+          return InstanceStatus.Details.find(({ Status }) => {
+            return Status === "initializing";
+          });
+        }
+      );
+
+      if (initializingInstance) {
+        clearInterval(interval);
+        return resolve(initializingInstance.InstanceId);
+      }
+
+      totalTime += INTERVAL_TIME;
+    }, INTERVAL_TIME);
   });
 
-  const { InstanceStatuses } = await ec2.describeInstanceStatus().promise();
-
-  const initializingInstance = InstanceStatuses.find(({ InstanceStatus }) => {
-    return InstanceStatus.Details.find(({ Status }) => {
-      return Status === "initializing";
-    });
-  });
-
-  if (!initializingInstance) throw new Error("No instance initiliazed found");
-
-  return initializingInstance.InstanceId;
+  return InstanceId;
 }
 
 async function updateTags(InstanceId, typeOfTag) {
