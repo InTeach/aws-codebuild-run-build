@@ -1,2 +1,2 @@
-## AWS CodeDeploy Run Build for GitHub Actions
+## AWS CodeDeploy for GitHub Actions
 
