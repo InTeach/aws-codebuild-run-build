@@ -41,6 +41,9 @@ async function runDeploy() {
     await waitFor(instanceId);
     console.log("Instance is", instanceId);
 
+    console.log(`Waiting for deployment on ${instanceId} to be done`);
+    await waitForDeployment(sdk);
+
     // Add tag to deploy to this new instance
     console.log("Adding " + NEW_INSTANCE_TAG + " tag to instance");
     await updateTags(instanceId, "target");
@@ -64,6 +67,34 @@ async function runDeploy() {
 
     return deployInfos;
   }
+}
+
+async function waitForDeployment(sdk) {
+  // Get current deployment
+  const {
+    deployments: [deploymentId],
+  } = await sdk.codeDeploy
+    .listDeployments({
+      applicationName: "InTeach-Academy",
+      deploymentGroupName: "Production-BlueGreen",
+      includeOnlyStatuses: ["InProgress"],
+    })
+    .promise();
+
+  if (!deploymentId) {
+    console.log("No deployment in progress found");
+    return;
+  }
+
+  console.log(
+    `Deployment ${deploymentId} is in progress, wait for it to be done.`
+  );
+
+  await sdk.codeDeploy
+    .waitFor("deploymentSuccessful", {
+      deploymentId,
+    })
+    .promise();
 }
 
 async function updateDeploymentGroup(sdk) {
