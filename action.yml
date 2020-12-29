@@ -4,9 +4,6 @@ branding:
   icon: "cloud"
   color: "orange"
 inputs:
-  application-name:
-    description: "AWS CodeDeploy Application Name"
-    required: true
   deployment-config-name:
     description: "Config name"
     required: false
@@ -27,6 +24,9 @@ inputs:
     required: false
   deployment-type:
     description: "Deployment type"
+    required: false
+  branch-name:
+    description: "Current branch name"
     required: false
 outputs:
   aws-deployment-id:

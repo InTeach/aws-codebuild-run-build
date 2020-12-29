@@ -18,21 +18,54 @@ module.exports = {
   logName,
 };
 
+const branchOptions = {
+  master: {
+    applicationName: "InTeach-Academy",
+    deploymentGroupName: "Production-BlueGreen",
+    autoscalingGroupName: "academy",
+    newInstanceTag: NEW_INSTANCE_TAG,
+    deployedInstanceTag: DEPLOYED_INSTANCE_TAG,
+  },
+  doctolib: {
+    applicationName: "Doctolib",
+    deploymentGroupName: "Doctolib-BlueGreen",
+    autoscalingGroupName: "doctolib",
+    newInstanceTag: NEW_INSTANCE_TAG + "_DOCTOLIB",
+    deployedInstanceTag: DEPLOYED_INSTANCE_TAG + "_DOCTOLIB",
+  },
+  "feature/multibranch-deploy": {
+    applicationName: "Doctolib",
+    deploymentGroupName: "Doctolib-BlueGreen",
+    autoscalingGroupName: "doctolib",
+    newInstanceTag: NEW_INSTANCE_TAG + "_DOCTOLIB",
+    deployedInstanceTag: DEPLOYED_INSTANCE_TAG + "_DOCTOLIB",
+  },
+};
+
 async function runDeploy() {
   // get a codeBuild instance from the SDK
   const sdk = buildSdk();
 
   // Get input options for startBuild
   const inputs = githubInputs();
-  const params = inputs2Parameters(inputs);
+
+  const opts = branchOptions[inputs.branchName] || branchOptions.master;
+
+  console.log("opts", opts);
+
+  const params = inputs2Parameters(inputs, opts);
+
+  console.log("params", JSON.stringify(params));
 
   console.log("Deployment type is", inputs.deploymentType);
 
   if (inputs.deploymentType === "in-place") {
-    return deploy(sdk, params);
+    return depoy(sdk, params);
   } else {
     console.log("Looking for ASG");
-    const autoscalingGroup = await getAutoScalingGroup();
+    const autoscalingGroup = await getAutoScalingGroup(
+      opts.autoscalingGroupName
+    );
 
     console.log("ASG found, scaling up");
     const instanceId = await scale("UP", autoscalingGroup);
@@ -41,29 +74,33 @@ async function runDeploy() {
     await waitFor(instanceId);
 
     console.log(`Waiting for deployment on ${instanceId} to be done`);
-    await waitForDeployment(sdk);
+    await waitForDeployment(sdk, opts);
 
     // Add tag to deploy to this new instance
-    console.log("Adding " + NEW_INSTANCE_TAG + " tag to instance");
-    await updateTags(instanceId, "target");
+    console.log("Adding " + opts.newInstanceTag + " tag to instance");
+    await updateTags(instanceId, "target", opts);
 
     /**
-     * We need to remove ASV from deployment group otherwise it will select
+     * We need to remove ASG from deployment group otherwise it will select
      * the CODEDEPLOY_TARGET instance thus causing a crash because CD won't find
      * a replacement. We will put it back after the deployment is successful
      */
     console.log("Removing ASG from Deployment Group");
-    await updateDeploymentGroup(sdk);
+    await updateDeploymentGroup(sdk, [], opts);
 
     console.log("Starting deployment with params", params);
     const deployInfos = await deploy(sdk, params);
 
-    console.log("Adding ASCF to Deployment Group");
-    await updateDeploymentGroup(sdk, [autoscalingGroup.AutoScalingGroupName]);
+    console.log("Adding ASG to Deployment Group");
+    await updateDeploymentGroup(
+      sdk,
+      [autoscalingGroup.AutoScalingGroupName],
+      opts
+    );
 
     // Deploy successful now remove tag from ec2Instance
     console.log("Updating tags");
-    await updateTags(instanceId);
+    await updateTags(instanceId, "", opts);
 
     // Scaling down
     console.log("Scaling down");
@@ -73,14 +110,14 @@ async function runDeploy() {
   }
 }
 
-async function waitForDeployment(sdk) {
+async function waitForDeployment(sdk, opts) {
   // Get current deployment
   const {
     deployments: [deploymentId],
   } = await sdk.codeDeploy
     .listDeployments({
-      applicationName: "InTeach-Academy",
-      deploymentGroupName: "Production-BlueGreen",
+      applicationName: opts.applicationName,
+      deploymentGroupName: opts.deploymentGroupName,
       includeOnlyStatuses: ["InProgress"],
     })
     .promise();
@@ -101,15 +138,20 @@ async function waitForDeployment(sdk) {
     .promise();
 }
 
-async function updateDeploymentGroup(sdk, autoScalingGroups = []) {
+async function updateDeploymentGroup(sdk, autoScalingGroups = [], opts) {
   await sdk.codeDeploy
     .updateDeploymentGroup({
-      applicationName: "InTeach-Academy",
-      currentDeploymentGroupName: "Production-BlueGreen",
-      autoScalingGroups: autoScalingGroups,
+      applicationName: opts.applicationName,
+      currentDeploymentGroupName: opts.deploymentGroupName,
+      autoScalingGroups,
       ec2TagFilters: [
         {
           Key: DEPLOYED_INSTANCE_TAG,
+          Value: "",
+          Type: "KEY_ONLY",
+        },
+        {
+          Key: opts.applicationName,
           Value: "",
           Type: "KEY_ONLY",
         },
@@ -118,7 +160,7 @@ async function updateDeploymentGroup(sdk, autoScalingGroups = []) {
     .promise();
 }
 
-async function getAutoScalingGroup() {
+async function getAutoScalingGroup(autoscalingGroupName) {
   const autoscaling = new aws.AutoScaling({ region: "eu-west-3" });
 
   const {
@@ -126,7 +168,7 @@ async function getAutoScalingGroup() {
   } = await autoscaling.describeAutoScalingGroups().promise();
 
   const autoscalingGroup = AutoScalingGroups.find((group) =>
-    group.AutoScalingGroupName.toLowerCase().includes("academy")
+    group.AutoScalingGroupName.toLowerCase().includes(autoscalingGroupName)
   );
 
   if (!autoscalingGroup) throw new Error("Autoscaling group not found");
@@ -182,14 +224,14 @@ async function scale(direction, autoscalingGroup) {
   return InstanceId;
 }
 
-async function updateTags(InstanceId, typeOfTag) {
+async function updateTags(InstanceId, typeOfTag, opts) {
   const ec2 = new aws.EC2({ region: "eu-west-3" });
 
   if (typeOfTag === "target") {
     await ec2
       .createTags({
         Resources: [InstanceId],
-        Tags: [{ Key: NEW_INSTANCE_TAG, Value: "" }],
+        Tags: [{ Key: opts.newInstanceTag, Value: "" }],
       })
       .promise();
   } else {
@@ -199,7 +241,7 @@ async function updateTags(InstanceId, typeOfTag) {
           Resources: [InstanceId],
           Tags: [
             {
-              Key: NEW_INSTANCE_TAG,
+              Key: opts.newInstanceTag,
             },
           ],
         })
@@ -207,7 +249,7 @@ async function updateTags(InstanceId, typeOfTag) {
       ec2
         .createTags({
           Resources: [InstanceId],
-          Tags: [{ Key: DEPLOYED_INSTANCE_TAG, Value: "" }],
+          Tags: [{ Key: opts.deployedInstanceTag, Value: "" }],
         })
         .promise(),
     ]);
@@ -314,6 +356,7 @@ function githubInputs() {
   const s3Key = core.getInput("s3-key");
   const bundleType = core.getInput("bundle-type");
   const deploymentType = core.getInput("deployment-type");
+  const branchName = core.getInput("branch-name");
 
   return {
     applicationName,
@@ -324,14 +367,13 @@ function githubInputs() {
     s3Key,
     bundleType,
     deploymentType,
+    branchName,
   };
 }
 
-function inputs2Parameters(inputs) {
+function inputs2Parameters(inputs, opts) {
   const {
-    applicationName,
     deploymentConfigName,
-    deploymentGroupName,
     fileExistsBehavior = "DISALLOW",
     s3Bucket,
     s3Key,
@@ -340,14 +382,14 @@ function inputs2Parameters(inputs) {
   } = inputs;
 
   const mainConfig = {
-    applicationName,
+    applicationName: opts.applicationName,
     autoRollbackConfiguration: {
       enabled: true,
       events: ["DEPLOYMENT_FAILURE", "DEPLOYMENT_STOP_ON_REQUEST"],
     },
     deploymentConfigName,
     fileExistsBehavior,
-    deploymentGroupName,
+    deploymentGroupName: opts.deploymentGroupName,
     revision: {
       revisionType: "S3",
       s3Location: {
@@ -366,7 +408,7 @@ function inputs2Parameters(inputs) {
           ec2TagSetList: [
             [
               {
-                Key: NEW_INSTANCE_TAG,
+                Key: opts.newInstanceTag,
                 Value: "",
                 Type: "KEY_ONLY",
               },
