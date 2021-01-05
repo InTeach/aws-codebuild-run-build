@@ -86,17 +86,13 @@ async function runDeploy() {
      * a replacement. We will put it back after the deployment is successful
      */
     console.log("Removing ASG from Deployment Group");
-    await updateDeploymentGroup(sdk, [], opts);
+    await updateDeploymentGroup(sdk, opts);
 
     console.log("Starting deployment with params", params);
     const deployInfos = await deploy(sdk, params);
 
     console.log("Adding ASG to Deployment Group");
-    await updateDeploymentGroup(
-      sdk,
-      [autoscalingGroup.AutoScalingGroupName],
-      opts
-    );
+    //await updateDeploymentGroup(sdk, opts);
 
     // Deploy successful now remove tag from ec2Instance
     console.log("Updating tags");
@@ -138,20 +134,15 @@ async function waitForDeployment(sdk, opts) {
     .promise();
 }
 
-async function updateDeploymentGroup(sdk, autoScalingGroups = [], opts) {
+async function updateDeploymentGroup(sdk, opts) {
   await sdk.codeDeploy
     .updateDeploymentGroup({
       applicationName: opts.applicationName,
       currentDeploymentGroupName: opts.deploymentGroupName,
-      autoScalingGroups,
+      autoScalingGroups: [],
       ec2TagFilters: [
         {
-          Key: DEPLOYED_INSTANCE_TAG,
-          Value: "",
-          Type: "KEY_ONLY",
-        },
-        {
-          Key: opts.applicationName,
+          Key: opts.deployedInstanceTag,
           Value: "",
           Type: "KEY_ONLY",
         },
