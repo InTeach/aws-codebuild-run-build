@@ -380,6 +380,7 @@ function inputs2Parameters(inputs, opts) {
     },
     deploymentConfigName,
     fileExistsBehavior,
+    ignoreApplicationStopFailures: true,
     deploymentGroupName: opts.deploymentGroupName,
     revision: {
       revisionType: "S3",
