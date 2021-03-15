@@ -60,7 +60,7 @@ async function runDeploy() {
   console.log("Deployment type is", inputs.deploymentType);
 
   if (inputs.deploymentType === "in-place") {
-    return depoy(sdk, params);
+    return deploy(sdk, params);
   } else {
     console.log("Looking for ASG");
     const autoscalingGroup = await getAutoScalingGroup(
@@ -85,13 +85,13 @@ async function runDeploy() {
      * the CODEDEPLOY_TARGET instance thus causing a crash because CD won't find
      * a replacement. We will put it back after the deployment is successful
      */
-    console.log("Removing ASG from Deployment Group");
-    await updateDeploymentGroup(sdk, opts);
+    //console.log("Removing ASG from Deployment Group");
+    //await updateDeploymentGroup(sdk, opts);
 
-    console.log("Starting deployment with params", params);
-    const deployInfos = await deploy(sdk, params);
+    //console.log("Starting deployment with params", params);
+    //const deployInfos = await deploy(sdk, params);
 
-    console.log("Adding ASG to Deployment Group");
+    //console.log("Adding ASG to Deployment Group");
     //await updateDeploymentGroup(sdk, opts);
 
     // Deploy successful now remove tag from ec2Instance
@@ -102,7 +102,7 @@ async function runDeploy() {
     console.log("Scaling down");
     await scale("DOWN", autoscalingGroup);
 
-    return deployInfos;
+    return { status: "OK" };
   }
 }
 
@@ -134,7 +134,7 @@ async function waitForDeployment(sdk, opts) {
     .promise();
 }
 
-async function updateDeploymentGroup(sdk, opts) {
+/*async function updateDeploymentGroup(sdk, opts) {
   await sdk.codeDeploy
     .updateDeploymentGroup({
       applicationName: opts.applicationName,
@@ -149,7 +149,7 @@ async function updateDeploymentGroup(sdk, opts) {
       ],
     })
     .promise();
-}
+}*/
 
 async function getAutoScalingGroup(autoscalingGroupName) {
   const autoscaling = new aws.AutoScaling({ region: "eu-west-3" });
